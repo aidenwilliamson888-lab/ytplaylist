@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YouTube Bulk Playlist Adder</title>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1117;
+      --panel: #171b24;
+      --panel2: #202635;
+      --border: #30394c;
+      --text: #eef2ff;
+      --muted: #9ba8bf;
+      --accent: #5b8cff;
+      --success: #36c98f;
+      --danger: #ff6b7a;
+      --warning: #f3bd62;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, Arial, sans-serif;
+      background: radial-gradient(circle at top, #1b2740 0, var(--bg) 42%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .wrap { width: min(1050px, calc(100% - 28px)); margin: 28px auto 60px; }
+    .hero, .panel {
+      background: rgba(23, 27, 36, .94);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: 0 18px 60px rgba(0,0,0,.22);
+    }
+    .hero { padding: 26px; margin-bottom: 16px; }
+    .panel { padding: 22px; margin-top: 16px; }
+    h1 { margin: 0 0 8px; font-size: clamp(24px, 4vw, 38px); }
+    h2 { margin: 0 0 16px; font-size: 20px; }
+    p { color: var(--muted); line-height: 1.55; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .full { grid-column: 1 / -1; }
+    label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 7px; }
+    input, select, textarea, button {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #101521;
+      color: var(--text);
+      padding: 12px 13px;
+      font: inherit;
+    }
+    textarea { min-height: 230px; resize: vertical; line-height: 1.45; }
+    button { cursor: pointer; font-weight: 700; background: var(--accent); border-color: transparent; }
+    button.secondary { background: var(--panel2); border-color: var(--border); }
+    button.danger { background: #71303d; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+    .actions button { width: auto; min-width: 150px; }
+    .status { padding: 12px 14px; border-radius: 10px; background: #101521; border: 1px solid var(--border); color: var(--muted); white-space: pre-wrap; }
+    .status.ok { border-color: #246c50; color: #a9f2d1; }
+    .status.error { border-color: #7d3442; color: #ffb3bd; }
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 14px; }
+    .stat { background: var(--panel2); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+    .stat strong { display: block; font-size: 23px; margin-top: 4px; }
+    .progress { height: 12px; border-radius: 999px; overflow: hidden; background: #0c1019; border: 1px solid var(--border); margin-top: 14px; }
+    .bar { height: 100%; width: 0%; background: linear-gradient(90deg, #5b8cff, #36c98f); transition: width .2s; }
+    .log { max-height: 280px; overflow: auto; background: #0b0f17; border: 1px solid var(--border); border-radius: 10px; padding: 12px; font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; }
+    .hint { font-size: 12px; color: var(--muted); margin-top: 7px; }
+    .pill { display: inline-block; padding: 5px 9px; border-radius: 999px; background: #24314d; color: #bcd0ff; font-size: 12px; }
+    .check { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; margin-top: 12px; }
+    .check input { width: auto; }
+    @media (max-width: 720px) {
+      .grid, .stats { grid-template-columns: 1fr 1fr; }
+      .full { grid-column: 1 / -1; }
+      .actions button { width: 100%; }
+    }
+    @media (max-width: 440px) {
+      .grid, .stats { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <span class="pill">Cloudflare Pages · YouTube Data API v3</span>
+      <h1>Bulk YouTube Playlist Adder</h1>
+      <p>Login with Google, choose one of your playlists, paste YouTube URLs, and add videos one by one. This frontend uses Google Identity Services; no Google client secret is placed in this file.</p>
+      <div class="status" id="status">Not connected. Enter your OAuth Client ID, then click Sign in.</div>
+    </section>
+
+    <section class="panel">
+      <h2>1. Google OAuth configuration</h2>
+      <div class="grid">
+        <div class="full">
+          <label for="clientId">OAuth Client ID (Web application)</label>
+          <input id="clientId" placeholder="1234567890-xxxxxxxx.apps.googleusercontent.com" autocomplete="off" />
+          <div class="hint">Use the Web application client ID whose authorized JavaScript origin matches this Cloudflare Pages domain.</div>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="loginBtn">Sign in with Google</button>
+        <button id="logoutBtn" class="secondary" disabled>Clear session</button>
+      </div>
+      <div class="hint">Required OAuth scope: https://www.googleapis.com/auth/youtube.force-ssl</div>
+    </section>
+
+    <section class="panel">
+      <h2>2. Playlist and URLs</h2>
+      <div class="grid">
+        <div class="full">
+          <label for="playlist">Target playlist</label>
+          <select id="playlist" disabled>
+            <option value="">Sign in to load playlists</option>
+          </select>
+        </div>
+        <div class="full">
+          <label for="urls">YouTube URLs — one per line</label>
+          <textarea id="urls" placeholder="https://www.youtube.com/watch?v=VIDEO_ID&#10;https://youtu.be/VIDEO_ID&#10;https://www.youtube.com/shorts/VIDEO_ID"></textarea>
+          <div class="hint">The tool accepts watch, youtu.be, shorts, and embed URL formats. It removes duplicate video IDs locally.</div>
+        </div>
+      </div>
+      <div class="stats">
+        <div class="stat"><span class="hint">Valid</span><strong id="validCount">0</strong></div>
+        <div class="stat"><span class="hint">Duplicate</span><strong id="duplicateCount">0</strong></div>
+        <div class="stat"><span class="hint">Existing</span><strong id="existingCount">0</strong></div>
+        <div class="stat"><span class="hint">To add</span><strong id="toAddCount">0</strong></div>
+      </div>
+      <div class="actions">
+        <button id="analyzeBtn" class="secondary">Analyze URLs</button>
+        <button id="addBtn" disabled>Add videos to playlist</button>
+        <button id="clearBtn" class="secondary">Clear</button>
+      </div>
+      <label class="check"><input type="checkbox" id="skipExisting" checked /> Skip videos already in the selected playlist</label>
+    </section>
+
+    <section class="panel">
+      <h2>3. Progress and log</h2>
+      <div class="progress"><div class="bar" id="bar"></div></div>
+      <p id="progressText">0 / 0 processed</p>
+      <div class="log" id="log">Ready.</div>
+      <div class="actions">
+        <button id="downloadBtn" class="secondary">Download report</button>
+      </div>
+    </section>
+  </main>
+
+<script>
+(() => {
+  "use strict";
+
+  const SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl";
+  const API = "https://www.googleapis.com/youtube/v3";
+  const $ = (id) => document.getElementById(id);
+
+  let tokenClient = null;
+  let accessToken = "";
+  let parsedVideos = [];
+  let existingIds = new Set();
+  let report = [];
+  let isRunning = false;
+
+  const status = (message, type = "") => {
+    const el = $("status");
+    el.textContent = message;
+    el.className = "status" + (type ? " " + type : "");
+  };
+
+  const log = (message) => {
+    const el = $("log");
+    el.textContent += (el.textContent ? "\n" : "") + message;
+    el.scrollTop = el.scrollHeight;
+  };
+
+  const resetLog = () => $("log").textContent = "";
+
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+  function extractVideoId(raw) {
+    try {
+      const url = new URL(raw.trim());
+      const host = url.hostname.replace(/^www\./, "").toLowerCase();
+
+      if (host === "youtu.be") {
+        return url.pathname.split("/").filter(Boolean)[0] || null;
+      }
+      if (host === "youtube.com" || host === "m.youtube.com") {
+        if (url.pathname === "/watch") return url.searchParams.get("v");
+        const parts = url.pathname.split("/").filter(Boolean);
+        if (["shorts", "embed", "live"].includes(parts[0])) return parts[1] || null;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function analyzeLocal() {
+    const lines = $("urls").value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const seen = new Set();
+    const valid = [];
+    let duplicate = 0;
+
+    for (const line of lines) {
+      const id = extractVideoId(line);
+      if (!id || !/^[A-Za-z0-9_-]{6,20}$/.test(id)) continue;
+      if (seen.has(id)) {
+        duplicate++;
+        continue;
+      }
+      seen.add(id);
+      valid.push({ id, url: line });
+    }
+
+    parsedVideos = valid;
+    $("validCount").textContent = valid.length;
+    $("duplicateCount").textContent = duplicate;
+    updateCounts();
+    log(`Local analysis: ${valid.length} valid video(s), ${duplicate} duplicate(s).`);
+  }
+
+  function updateCounts() {
+    const existing = parsedVideos.filter(v => existingIds.has(v.id)).length;
+    const toAdd = $("skipExisting").checked
+      ? parsedVideos.filter(v => !existingIds.has(v.id)).length
+      : parsedVideos.length;
+
+    $("existingCount").textContent = existing;
+    $("toAddCount").textContent = toAdd;
+    $("addBtn").disabled = !accessToken || !$("playlist").value || !parsedVideos.length || isRunning;
+  }
+
+  async function api(path, options = {}) {
+    const response = await fetch(API + path, {
+      ...options,
+      headers: {
+        Authorization: "Bearer " + accessToken,
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = data?.error?.message || `HTTP ${response.status}`;
+      throw new Error(message);
+    }
+    return data;
+  }
+
+  async function loadPlaylists() {
+    const select = $("playlist");
+    select.innerHTML = '<option value="">Loading playlists...</option>';
+    select.disabled = true;
+
+    let pageToken = "";
+    const playlists = [];
+
+    do {
+      const params = new URLSearchParams({
+        part: "snippet,contentDetails",
+        mine: "true",
+        maxResults: "50"
+      });
+      if (pageToken) params.set("pageToken", pageToken);
+      const data = await api("/playlists?" + params.toString());
+      for (const item of data.items || []) {
+        playlists.push({
+          id: item.id,
+          title: item.snippet?.title || item.id,
+          count: item.contentDetails?.itemCount ?? "?"
+        });
+      }
+      pageToken = data.nextPageToken || "";
+    } while (pageToken);
+
+    select.innerHTML = '<option value="">Choose a playlist...</option>';
+    for (const p of playlists) {
+      const option = document.createElement("option");
+      option.value = p.id;
+      option.textContent = `${p.title} (${p.count} items)`;
+      select.appendChild(option);
+    }
+    select.disabled = false;
+    status(`Connected. Loaded ${playlists.length} playlist(s).`, "ok");
+  }
+
+  async function loadExistingItems(playlistId) {
+    existingIds = new Set();
+    let pageToken = "";
+
+    do {
+      const params = new URLSearchParams({
+        part: "contentDetails",
+        playlistId,
+        maxResults: "50"
+      });
+      if (pageToken) params.set("pageToken", pageToken);
+      const data = await api("/playlistItems?" + params.toString());
+      for (const item of data.items || []) {
+        const id = item.contentDetails?.videoId;
+        if (id) existingIds.add(id);
+      }
+      pageToken = data.nextPageToken || "";
+    } while (pageToken);
+
+    updateCounts();
+    log(`Loaded ${existingIds.size} existing video ID(s) from the playlist.`);
+  }
+
+  function initializeOAuth() {
+    const clientId = $("clientId").value.trim();
+    if (!clientId || !clientId.endsWith(".apps.googleusercontent.com")) {
+      status("Enter a valid OAuth Web Client ID first.", "error");
+      return false;
+    }
+    if (!window.google?.accounts?.oauth2) {
+      status("Google Identity Services has not loaded yet. Refresh and try again.", "error");
+      return false;
+    }
+
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: clientId,
+      scope: SCOPE,
+      callback: async (response) => {
+        if (response.error) {
+          status("OAuth error: " + response.error, "error");
+          return;
+        }
+        accessToken = response.access_token;
+        $("logoutBtn").disabled = false;
+        try {
+          const me = await api("/channels?part=snippet&mine=true");
+          const title = me.items?.[0]?.snippet?.title || "YouTube channel";
+          status(`Signed in as: ${title}`, "ok");
+          await loadPlaylists();
+          updateCounts();
+        } catch (error) {
+          status("Connected, but YouTube access failed: " + error.message, "error");
+        }
+      }
+    });
+    return true;
+  }
+
+  $("loginBtn").addEventListener("click", () => {
+    if (!initializeOAuth()) return;
+    tokenClient.requestAccessToken({ prompt: accessToken ? "" : "consent" });
+  });
+
+  $("logoutBtn").addEventListener("click", () => {
+    if (accessToken && window.google?.accounts?.oauth2) {
+      google.accounts.oauth2.revoke(accessToken, () => {});
+    }
+    accessToken = "";
+    tokenClient = null;
+    $("playlist").innerHTML = '<option value="">Sign in to load playlists</option>';
+    $("playlist").disabled = true;
+    $("logoutBtn").disabled = true;
+    $("addBtn").disabled = true;
+    status("Session cleared.");
+    log("Session cleared.");
+  });
+
+  $("analyzeBtn").addEventListener("click", analyzeLocal);
+  $("skipExisting").addEventListener("change", updateCounts);
+
+  $("playlist").addEventListener("change", async () => {
+    if (!$("playlist").value || !accessToken) return;
+    try {
+      await loadExistingItems($("playlist").value);
+    } catch (error) {
+      status("Could not read playlist items: " + error.message, "error");
+    }
+  });
+
+  $("clearBtn").addEventListener("click", () => {
+    $("urls").value = "";
+    parsedVideos = [];
+    existingIds = new Set();
+    report = [];
+    $("validCount").textContent = "0";
+    $("duplicateCount").textContent = "0";
+    $("existingCount").textContent = "0";
+    $("toAddCount").textContent = "0";
+    $("bar").style.width = "0%";
+    $("progressText").textContent = "0 / 0 processed";
+    resetLog();
+    log("Cleared.");
+    updateCounts();
+  });
+
+  $("addBtn").addEventListener("click", async () => {
+    if (isRunning) return;
+    const playlistId = $("playlist").value;
+    if (!accessToken || !playlistId) {
+      status("Sign in and choose a playlist first.", "error");
+      return;
+    }
+
+    analyzeLocal();
+    if (!parsedVideos.length) {
+      status("No valid video URLs found.", "error");
+      return;
+    }
+
+    isRunning = true;
+    $("addBtn").disabled = true;
+    report = [];
+    resetLog();
+
+    const queue = $("skipExisting").checked
+      ? parsedVideos.filter(v => !existingIds.has(v.id))
+      : parsedVideos.slice();
+
+    let done = 0;
+    $("bar").style.width = "0%";
+    $("progressText").textContent = `0 / ${queue.length} processed`;
+    log(`Starting ${queue.length} video(s).`);
+
+    for (const video of queue) {
+      try {
+        await api("/playlistItems?part=snippet", {
+          method: "POST",
+          body: JSON.stringify({
+            snippet: {
+              playlistId,
+              resourceId: {
+                kind: "youtube#video",
+                videoId: video.id
+              }
+            }
+          })
+        });
+        existingIds.add(video.id);
+        report.push({ videoId: video.id, status: "added", message: "Added" });
+        log(`ADDED  ${video.id}`);
+      } catch (error) {
+        report.push({ videoId: video.id, status: "failed", message: error.message });
+        log(`FAILED ${video.id} — ${error.message}`);
+      }
+
+      done++;
+      $("bar").style.width = `${Math.round(done / queue.length * 100)}%`;
+      $("progressText").textContent = `${done} / ${queue.length} processed`;
+      await sleep(350);
+    }
+
+    isRunning = false;
+    updateCounts();
+    const added = report.filter(r => r.status === "added").length;
+    const failed = report.filter(r => r.status === "failed").length;
+    status(`Finished. Added: ${added}. Failed: ${failed}.`, failed ? "" : "ok");
+    log(`Finished. Added ${added}; failed ${failed}.`);
+  });
+
+  $("downloadBtn").addEventListener("click", () => {
+    if (!report.length) {
+      status("No report available yet.", "error");
+      return;
+    }
+    const lines = ["videoId,status,message", ...report.map(r =>
+      [r.videoId, r.status, r.message].map(value =>
+        '"' + String(value).replaceAll('"', '""') + '"'
+      ).join(",")
+    )];
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "youtube-playlist-report.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  // Load a previously entered Client ID for convenience; never stores tokens.
+  const savedClientId = sessionStorage.getItem("yt_client_id");
+  if (savedClientId) $("clientId").value = savedClientId;
+  $("clientId").addEventListener("change", () => {
+    sessionStorage.setItem("yt_client_id", $("clientId").value.trim());
+  });
+})();
+</script>
+</body>
+</html>
