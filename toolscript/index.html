@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TMDB → Google Apps Script Generator</title>
+<style>
+:root{--bg:#f4f7fb;--card:#fff;--text:#182230;--muted:#667085;--blue:#2563eb}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Arial,sans-serif}
+.wrap{max-width:1100px;margin:auto;padding:24px}.card{background:var(--card);padding:22px;border-radius:16px;margin-bottom:18px;box-shadow:0 8px 30px #1d355710}
+h1{margin-top:0}h2{font-size:19px}label{display:block;font-weight:700;margin:12px 0 6px}
+input,select,textarea,button{width:100%;padding:12px;border:1px solid #d0d5dd;border-radius:9px;font:inherit}
+textarea{min-height:160px;resize:vertical}button{background:var(--blue);color:#fff;border:0;cursor:pointer;font-weight:700;margin-top:12px}
+button.alt{background:#475467}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.note{font-size:13px;color:var(--muted);line-height:1.5}.status{white-space:pre-wrap;color:var(--muted);margin-top:12px}
+@media(max-width:720px){.grid{grid-template-columns:1fr}.wrap{padding:14px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="card">
+<h1>TMDB → Google Apps Script Generator</h1>
+<p class="note">This Cloudflare-ready tool generates Code.gs and Index.html files. The generated files can be copied into a Google Apps Script project.</p>
+<label>TMDB API key</label>
+<input id="apiKey" type="password" placeholder="Paste your TMDB API key">
+<div class="grid">
+<div><label>Default country</label><select id="country">
+<option value="">Global</option><option value="IN">India</option><option value="US">United States</option><option value="KR">South Korea</option><option value="JP">Japan</option><option value="GB">United Kingdom</option><option value="FR">France</option><option value="IT">Italy</option><option value="ES">Spain</option><option value="TH">Thailand</option><option value="ID">Indonesia</option><option value="TR">Turkey</option><option value="MX">Mexico</option><option value="DE">Germany</option>
+</select></div>
+<div><label>Default language</label><select id="language">
+<option value="en-US">English</option><option value="hi-IN">Hindi</option><option value="ko-KR">Korean</option><option value="ja-JP">Japanese</option><option value="id-ID">Indonesian</option><option value="fr-FR">French</option><option value="es-ES">Spanish</option><option value="th-TH">Thai</option>
+</select></div>
+</div>
+<label>Five SEO title patterns (one per line)</label>
+<textarea id="patterns">Watch {TITLE} Full Movie Online
+{TITLE} Full Movie {YEAR} - Watch Online
+Watch {TITLE} {YEAR} Full Movie HD
+{TITLE} Movie Streaming Online
+Where to Watch {TITLE} Full Movie</textarea>
+<label>Article template</label>
+<textarea id="template" placeholder="Paste your FORMAT.txt article here. Use #TITLE# as the movie title placeholder."></textarea>
+<label>Default SEO description</label>
+<textarea id="description" placeholder="Description template. Use {TITLE} and {YEAR}."></textarea>
+<label>Default extra keywords (comma separated)</label>
+<input id="keywords" placeholder="movie, cast, release date, review">
+<button onclick="downloadGenerated()">Generate and download Code.gs + Index.html</button>
+<div id="status" class="status"></div>
+</div>
+<div class="card">
+<h2>How to use</h2>
+<ol class="note">
+<li>Fill in the TMDB API key and preferences.</li>
+<li>Paste your article containing #TITLE#.</li>
+<li>Download the generated files.</li>
+<li>Open script.google.com and create a project.</li>
+<li>Paste Code.gs into the script editor and create an HTML file named Index.</li>
+<li>Paste Index.html, save, and deploy as a Web App.</li>
+</ol>
+</div>
+</div>
+<script>
+function val(id){return document.getElementById(id).value}
+function download(name,text,type='text/plain'){
+ const blob=new Blob([text],{type:type+';charset=utf-8'});
+ const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;
+ document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),500);
+}
+function downloadGenerated(){
+ const apiKey=val('apiKey').trim(), country=val('country'), language=val('language');
+ const patterns=val('patterns'), template=val('template'), description=val('description'), keywords=val('keywords');
+ if(!apiKey||!template.trim()){document.getElementById('status').textContent='Please enter the API key and article template.';return}
+ const gs=makeGs(apiKey,country,language,patterns,description,keywords,template);
+ const html=makeHtml();
+ download('Code.gs',gs);download('Index.html',html,'text/html');
+ document.getElementById('status').textContent='Generated Code.gs and Index.html. Two downloads should start.';
+}
+function js(s){return JSON.stringify(s)}
+function makeGs(apiKey,country,language,patterns,description,keywords,template){
+return `const TMDB_API_KEY = ${js(apiKey)};
+const DEFAULT_REGION = ${js(country)};
+const DEFAULT_LANGUAGE = ${js(language)};
+const SEO_PATTERNS = ${js(patterns.split('\\n').map(x=>x.trim()).filter(Boolean).slice(0,5))};
+const ARTICLE_TEMPLATE = ${js(template)};
+const DEFAULT_DESCRIPTION = ${js(description)};
+const DEFAULT_KEYWORDS = ${js(keywords.split(',').map(x=>x.trim()).filter(Boolean))};
+
+function doGet() {
+  return HtmlService.createHtmlOutputFromFile('Index')
+    .setTitle('TMDB Movie SEO Generator')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+function tmdb_(path, params) {
+  params = params || {};
+  params.api_key = TMDB_API_KEY;
+  params.language = params.language || DEFAULT_LANGUAGE;
+  const query = Object.keys(params).map(k => encodeURIComponent(k)+'='+encodeURIComponent(params[k])).join('&');
+  const r = UrlFetchApp.fetch('https://api.themoviedb.org/3'+path+'?'+query, {muteHttpExceptions:true});
+  if (r.getResponseCode() < 200 || r.getResponseCode() >= 300) throw new Error(r.getContentText());
+  return JSON.parse(r.getContentText());
+}
+function getPopularMovies(options) {
+  options = options || {};
+  return tmdb_('/movie/popular', {
+    language: options.language || DEFAULT_LANGUAGE,
+    region: options.region || DEFAULT_REGION,
+    page: Number(options.page || 1)
+  }).results || [];
+}
+function getMovieDetails(id, language) {
+  return tmdb_('/movie/'+encodeURIComponent(id), {
+    language: language || DEFAULT_LANGUAGE,
+    append_to_response: 'credits'
+  });
+}
+function buildSeoTitles(movie) {
+  const title = movie.title || movie.original_title || 'Movie';
+  const year = movie.release_date ? movie.release_date.substring(0,4) : '';
+  return SEO_PATTERNS.slice(0,5).map(p => p.replace(/\\\\{TITLE\\\\}/g,title).replace(/\\\\{YEAR\\\\}/g,year));
+}
+function replaceTitle_(text,title){return String(text||'').replace(/#TITLE#/g,title);}
+function esc_(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');}
+function generateMovieHtml(movie, seoTitleIndex) {
+  const title = movie.title || movie.original_title || 'Movie';
+  const year = movie.release_date ? movie.release_date.substring(0,4) : '';
+  const titles = buildSeoTitles(movie);
+  const seoTitle = titles[Number(seoTitleIndex||0)] || title+' Full Movie';
+  const desc = DEFAULT_DESCRIPTION
+    .replace(/\\\\{TITLE\\\\}/g,title).replace(/\\\\{YEAR\\\\}/g,year);
+  const article = replaceTitle_(ARTICLE_TEMPLATE,title);
+  const poster = movie.poster_path ? 'https://image.tmdb.org/t/p/w780'+movie.poster_path : '';
+  return '<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+esc_(seoTitle)+'</title><meta name="description" content="'+esc_(desc)+'"><meta name="keywords" content="'+esc_(DEFAULT_KEYWORDS.join(', '))+'"><meta name="robots" content="index,follow"></head><body><main>'+ (poster?'<img src="'+esc_(poster)+'" alt="'+esc_(title)+'">':'') +'<article>'+esc_(article).replace(/\\\\n/g,'<br>')+'</article></main></body></html>';
+}
+`;
+}
+function makeHtml(){
+return `<!doctype html><html lang="en"><head><base target="_top"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TMDB Movie SEO Generator</title><style>body{font-family:Arial;padding:24px;max-width:900px;margin:auto}button,select{padding:10px;margin:5px 0;width:100%}.movie{border:1px solid #ddd;padding:10px;margin:8px 0}</style></head><body><h1>TMDB Movie SEO Generator</h1><label>Region</label><select id="region"><option value="">Global</option><option value="IN">India</option><option value="US">United States</option><option value="KR">South Korea</option><option value="JP">Japan</option><option value="GB">United Kingdom</option><option value="ID">Indonesia</option></select><button onclick="load()">Load popular movies</button><div id="list"></div><p id="status"></p><script>let movies=[];function load(){google.script.run.withSuccessHandler(x=>{movies=x;document.getElementById('list').innerHTML=x.map((m,i)=>'<div class="movie"><b>'+m.title+'</b><br><button onclick="generate('+i+',0)">Generate SEO title 1</button><button onclick="generate('+i+',1)">Generate SEO title 2</button><button onclick="generate('+i+',2)">Generate SEO title 3</button><button onclick="generate('+i+',3)">Generate SEO title 4</button><button onclick="generate('+i+',4)">Generate SEO title 5</button></div>').join('')}).getPopularMovies({region:document.getElementById('region').value,page:1})}function generate(i,n){google.script.run.withSuccessHandler(html=>{const b=new Blob([html],{type:'text/html'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=(movies[i].title||'movie').replace(/[^a-z0-9]+/gi,'-')+'-'+(n+1)+'.html';a.click()}).generateMovieHtml(movies[i],n)}</script></body></html>`;
+}
+</script>
+</body>
+</html>
